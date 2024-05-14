@@ -870,7 +870,7 @@ struct rt_ofw_node *rt_ofw_get_cpu_node(int cpu, int *thread, rt_bool_t (*match_
 
     rt_ofw_foreach_cpu_node(cpu_np)
     {
-        rt_ssize_t prop_len;
+        rt_ssize_t prop_len = 0;
         rt_bool_t is_end = RT_FALSE;
         int tid, addr_cells = rt_ofw_io_addr_cells(cpu_np);
         const fdt32_t *cell = rt_ofw_prop_read_raw(cpu_np, propname, &prop_len);
@@ -1051,9 +1051,9 @@ rt_err_t ofw_alias_scan(void)
 
     rt_ofw_foreach_prop(np, prop)
     {
-        int id = 0, rate = 1;
+        int id = 0;
         struct alias_info *info;
-        const char *name = prop->name, *end;
+        const char *name = prop->name, *end, *id_start;
 
         /* Maybe the bootloader will set the name, or other nodes reference the aliases */
         if (!rt_strcmp(name, "name") || !rt_strcmp(name, "phandle"))
@@ -1066,19 +1066,20 @@ rt_err_t ofw_alias_scan(void)
             continue;
         }
 
-        end = name + rt_strlen(name) - 1;
+        end = name + rt_strlen(name);
 
-        while (*end && !(*end >= '0' && *end <= '9') && end > name)
+        while (*(end - 1) && (*(end - 1) >= '0' && *(end - 1) <= '9') && end > name)
         {
             --end;
         }
 
-        while (*end && (*end >= '0' && *end <= '9'))
+        id_start = end;
+        while (*id_start && (*id_start >= '0' && *id_start <= '9'))
         {
-            id += (*end - '0') * rate;
-            rate *= 10;
+            id *= 10;
+            id += (*id_start - '0');
 
-            ++end;
+            ++id_start;
         }
 
         info = rt_malloc(sizeof(*info));
@@ -1093,7 +1094,7 @@ rt_err_t ofw_alias_scan(void)
 
         info->id = id;
         info->tag = name;
-        info->tag_len = end - name - 1;
+        info->tag_len = end - name;
         info->np = tmp;
 
         rt_list_insert_after(&_aliases_nodes, &info->list);

@@ -107,12 +107,11 @@ static unsigned long _cnt_convert(unsigned long cnt)
 
 static void _sleep_timeout(void *parameter)
 {
-    struct rt_semaphore *sem;
-    sem = (struct rt_semaphore *)parameter;
-    rt_sem_release(sem);
+    struct rt_ktime_hrtimer *timer = parameter;
+    rt_completion_done(&timer->completion);
 }
 
-static void _set_next_timeout(void);
+static void _set_next_timeout_n_unlock(rt_base_t level);
 static void _timeout_callback(void *parameter)
 {
     rt_ktime_hrtimer_t timer;
@@ -122,25 +121,19 @@ static void _timeout_callback(void *parameter)
     level     = rt_spin_lock_irqsave(&_spinlock);
     _nowtimer = RT_NULL;
     rt_list_remove(&(timer->row));
+
     if (timer->parent.flag & RT_TIMER_FLAG_ACTIVATED)
     {
-        rt_spin_unlock_irqrestore(&_spinlock, level);
         timer->timeout_func(timer->parameter);
     }
-    else
-    {
-        rt_spin_unlock_irqrestore(&_spinlock, level);
-    }
 
-    _set_next_timeout();
+    _set_next_timeout_n_unlock(level);
 }
 
-static void _set_next_timeout(void)
+static void _set_next_timeout_n_unlock(rt_base_t level)
 {
     rt_ktime_hrtimer_t t;
-    rt_base_t          level;
 
-    level = rt_spin_lock_irqsave(&_spinlock);
     if (&_timer_list != _timer_list.prev)
     {
         t = rt_list_entry((&_timer_list)->next, struct rt_ktime_hrtimer, row);
@@ -195,7 +188,7 @@ void rt_ktime_hrtimer_init(rt_ktime_hrtimer_t timer,
     timer->init_cnt     = cnt;
 
     rt_list_init(&(timer->row));
-    rt_sem_init(&(timer->sem), "hrtimer", 0, RT_IPC_FLAG_PRIO);
+    rt_completion_init(&timer->completion);
 }
 
 rt_err_t rt_ktime_hrtimer_start(rt_ktime_hrtimer_t timer)
@@ -229,9 +222,8 @@ rt_err_t rt_ktime_hrtimer_start(rt_ktime_hrtimer_t timer)
     }
     rt_list_insert_after(timer_list, &(timer->row));
     timer->parent.flag |= RT_TIMER_FLAG_ACTIVATED;
-    rt_spin_unlock_irqrestore(&_spinlock, level);
 
-    _set_next_timeout();
+    _set_next_timeout_n_unlock(level);
 
     return RT_EOK;
 }
@@ -251,9 +243,8 @@ rt_err_t rt_ktime_hrtimer_stop(rt_ktime_hrtimer_t timer)
     _nowtimer = RT_NULL;
     rt_list_remove(&timer->row);
     timer->parent.flag &= ~RT_TIMER_FLAG_ACTIVATED; /* change status */
-    rt_spin_unlock_irqrestore(&_spinlock, level);
 
-    _set_next_timeout();
+    _set_next_timeout_n_unlock(level);
 
     return RT_EOK;
 }
@@ -333,6 +324,9 @@ rt_err_t rt_ktime_hrtimer_detach(rt_ktime_hrtimer_t timer)
     /* parameter check */
     RT_ASSERT(timer != RT_NULL);
 
+    /* notify the timer stop event */
+    rt_completion_wakeup_by_errno(&timer->completion, RT_ERROR);
+
     level = rt_spin_lock_irqsave(&_spinlock);
 
     /* stop timer */
@@ -342,51 +336,59 @@ rt_err_t rt_ktime_hrtimer_detach(rt_ktime_hrtimer_t timer)
     {
         _nowtimer = RT_NULL;
         rt_list_remove(&timer->row);
-        rt_spin_unlock_irqrestore(&_spinlock, level);
-        _set_next_timeout();
+        _set_next_timeout_n_unlock(level);
     }
     else
     {
         rt_spin_unlock_irqrestore(&_spinlock, level);
     }
-    rt_sem_detach(&(timer->sem));
 
     return RT_EOK;
 }
 
 /************************** delay ***************************/
 
-rt_err_t rt_ktime_hrtimer_sleep(unsigned long cnt)
+void rt_ktime_hrtimer_delay_init(struct rt_ktime_hrtimer *timer)
 {
-    struct rt_ktime_hrtimer timer;
+    rt_ktime_hrtimer_init(timer, "hrtimer_sleep", 0, RT_TIMER_FLAG_ONE_SHOT | RT_TIMER_FLAG_HARD_TIMER,
+                          _sleep_timeout, timer);
+}
+
+void rt_ktime_hrtimer_delay_detach(struct rt_ktime_hrtimer *timer)
+{
+    rt_ktime_hrtimer_detach(timer);
+}
+
+rt_err_t rt_ktime_hrtimer_sleep(struct rt_ktime_hrtimer *timer, unsigned long cnt)
+{
     rt_err_t err;
 
     if (cnt == 0)
         return -RT_EINVAL;
 
-    rt_ktime_hrtimer_init(&timer, "hrtimer_sleep", cnt, RT_TIMER_FLAG_ONE_SHOT | RT_TIMER_FLAG_HARD_TIMER,
-                          _sleep_timeout, &(timer.sem));
+    timer->timeout_cnt  = cnt + rt_ktime_cputimer_getcnt();
+    timer->init_cnt     = cnt;
 
-    rt_ktime_hrtimer_start(&timer); /* reset the timeout of thread timer and start it */
-    err = rt_sem_take_interruptible(&(timer.sem), RT_WAITING_FOREVER);
-    rt_ktime_hrtimer_keep_errno(&timer, err);
+    rt_ktime_hrtimer_start(timer); /* reset the timeout of thread timer and start it */
+    err = rt_completion_wait_flags(&(timer->completion), RT_WAITING_FOREVER,
+                                   RT_INTERRUPTIBLE);
+    rt_ktime_hrtimer_keep_errno(timer, err);
 
-    rt_ktime_hrtimer_detach(&timer);
     return RT_EOK;
 }
 
-rt_err_t rt_ktime_hrtimer_ndelay(unsigned long ns)
+rt_err_t rt_ktime_hrtimer_ndelay(struct rt_ktime_hrtimer *timer, unsigned long ns)
 {
     unsigned long res = rt_ktime_cputimer_getres();
-    return rt_ktime_hrtimer_sleep((ns * RT_KTIME_RESMUL) / res);
+    return rt_ktime_hrtimer_sleep(timer, (ns * RT_KTIME_RESMUL) / res);
 }
 
-rt_err_t rt_ktime_hrtimer_udelay(unsigned long us)
+rt_err_t rt_ktime_hrtimer_udelay(struct rt_ktime_hrtimer *timer, unsigned long us)
 {
-    return rt_ktime_hrtimer_ndelay(us * 1000);
+    return rt_ktime_hrtimer_ndelay(timer, us * 1000);
 }
 
-rt_err_t rt_ktime_hrtimer_mdelay(unsigned long ms)
+rt_err_t rt_ktime_hrtimer_mdelay(struct rt_ktime_hrtimer *timer, unsigned long ms)
 {
-    return rt_ktime_hrtimer_ndelay(ms * 1000000);
+    return rt_ktime_hrtimer_ndelay(timer, ms * 1000000);
 }

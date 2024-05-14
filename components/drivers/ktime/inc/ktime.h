@@ -6,6 +6,7 @@
  * Change Logs:
  * Date           Author       Notes
  * 2023-07-10     xqyjlj       The first version.
+ * 2024-04-26     Shell        Improve ipc performance
  */
 
 #ifndef __KTIME_H__
@@ -13,6 +14,7 @@
 
 #include <stdint.h>
 #include <sys/time.h>
+#include <ipc/completion.h>
 
 #include "rtthread.h"
 
@@ -20,13 +22,13 @@
 
 struct rt_ktime_hrtimer
 {
-    struct rt_object    parent; /**< inherit from rt_object */
-    rt_list_t           row;
-    void               *parameter;
-    unsigned long       init_cnt;
-    unsigned long       timeout_cnt;
-    rt_err_t            error;
-    struct rt_semaphore sem;
+    struct rt_object     parent; /**< inherit from rt_object */
+    rt_list_t            row;
+    void                 *parameter;
+    unsigned long        init_cnt;
+    unsigned long        timeout_cnt;
+    rt_err_t             error;
+    struct rt_completion completion;
     void (*timeout_func)(void *parameter);
 };
 typedef struct rt_ktime_hrtimer *rt_ktime_hrtimer_t;
@@ -139,13 +141,16 @@ rt_inline void rt_ktime_hrtimer_keep_errno(rt_ktime_hrtimer_t timer, rt_err_t er
     rt_set_errno(-err);
 }
 
+void rt_ktime_hrtimer_delay_init(struct rt_ktime_hrtimer *timer);
+void rt_ktime_hrtimer_delay_detach(struct rt_ktime_hrtimer *timer);
+
 /**
  * @brief sleep by the cputimer cnt value
  *
  * @param cnt: the cputimer cnt value
  * @return rt_err_t
  */
-rt_err_t rt_ktime_hrtimer_sleep(unsigned long cnt);
+rt_err_t rt_ktime_hrtimer_sleep(struct rt_ktime_hrtimer *timer, unsigned long cnt);
 
 /**
  * @brief sleep by ns
@@ -153,7 +158,7 @@ rt_err_t rt_ktime_hrtimer_sleep(unsigned long cnt);
  * @param ns: ns
  * @return rt_err_t
  */
-rt_err_t rt_ktime_hrtimer_ndelay(unsigned long ns);
+rt_err_t rt_ktime_hrtimer_ndelay(struct rt_ktime_hrtimer *timer, unsigned long ns);
 
 /**
  * @brief sleep by us
@@ -161,7 +166,7 @@ rt_err_t rt_ktime_hrtimer_ndelay(unsigned long ns);
  * @param us: us
  * @return rt_err_t
  */
-rt_err_t rt_ktime_hrtimer_udelay(unsigned long us);
+rt_err_t rt_ktime_hrtimer_udelay(struct rt_ktime_hrtimer *timer, unsigned long us);
 
 /**
  * @brief sleep by ms
@@ -169,6 +174,6 @@ rt_err_t rt_ktime_hrtimer_udelay(unsigned long us);
  * @param ms: ms
  * @return rt_err_t
  */
-rt_err_t rt_ktime_hrtimer_mdelay(unsigned long ms);
+rt_err_t rt_ktime_hrtimer_mdelay(struct rt_ktime_hrtimer *timer, unsigned long ms);
 
 #endif

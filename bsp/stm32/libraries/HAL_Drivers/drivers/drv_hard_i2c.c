@@ -6,6 +6,7 @@
  * Change Logs:
  * Date           Author       Notes
  * 2024-02-17     Dyyt587   first version
+ * 2024-04-23     Zeidan    fix bugs, test on STM32F429IGTx
  */
 
 #include <rtthread.h>
@@ -63,16 +64,15 @@ static rt_err_t stm32_i2c_init(struct stm32_i2c *i2c_drv)
     i2c_handle->Init.Timing = cfg->timing;
 #endif /* defined(SOC_SERIES_STM32H7) */
 #if defined(SOC_SERIES_STM32F4)
-  hi2c1.Init.ClockSpeed = 100000;
-  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+    i2c_handle->Init.ClockSpeed = 100000;
+    i2c_handle->Init.DutyCycle = I2C_DUTYCYCLE_2;
 #endif /* defined(SOC_SERIES_STM32F4) */
     i2c_handle->Init.OwnAddress1 = 0;
     i2c_handle->Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
 #if defined(SOC_SERIES_STM32H7)
     i2c_handle->Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
 #endif /* defined(SOC_SERIES_STM32H7) */
-    i2c_handle->Init.OwnAddress2 = 0;
-    i2c_handle->Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+    i2c_handle->Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
     i2c_handle->Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
     i2c_handle->Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
     if (HAL_I2C_DeInit(i2c_handle) != HAL_OK)
@@ -177,7 +177,7 @@ static rt_ssize_t stm32_i2c_master_xfer(struct rt_i2c_bus_device *bus,
         LOG_D("xfer       msgs[%d] addr=0x%2x buf=0x%x len= 0x%x flags= 0x%x", i, msg->addr, msg->buf, msg->len, msg->flags);
         next_msg = &msgs[i + 1];
         next_flag = next_msg->flags;
-        timeout = msg->len/TRANS_TIMEOUT_PERSEC + 1;
+        timeout = msg->len/TRANS_TIMEOUT_PERSEC + 5;
         if (next_flag & RT_I2C_NO_START)
         {
             if ((next_flag & RT_I2C_RD) == (msg->flags & RT_I2C_RD))
@@ -203,11 +203,11 @@ static rt_ssize_t stm32_i2c_master_xfer(struct rt_i2c_bus_device *bus,
                                                                                                                                                          : "nuknown mode");
             if ((i2c_obj->i2c_dma_flag & I2C_USING_RX_DMA_FLAG) && (msg->len >= DMA_TRANS_MIN_LEN))
             {
-                ret = HAL_I2C_Master_Seq_Receive_DMA(handle, (msg->addr<<1) , msg->buf, msg->len, mode);
+                ret = HAL_I2C_Master_Seq_Receive_DMA(handle, (msg->addr<<1), msg->buf, msg->len, mode);
             }
             else
             {
-                ret = HAL_I2C_Master_Seq_Receive_IT(handle, (msg->addr<<1) , msg->buf, msg->len, mode);
+                ret = HAL_I2C_Master_Seq_Receive_IT(handle, (msg->addr<<1), msg->buf, msg->len, mode);
             }
             if (ret != RT_EOK)
             {
@@ -228,11 +228,11 @@ static rt_ssize_t stm32_i2c_master_xfer(struct rt_i2c_bus_device *bus,
                                                                                                                                                          : "nuknown mode");
             if ((i2c_obj->i2c_dma_flag & I2C_USING_TX_DMA_FLAG) && (msg->len >= DMA_TRANS_MIN_LEN))
             {
-                ret = HAL_I2C_Master_Seq_Transmit_DMA(handle, (msg->addr<<1)  , msg->buf, msg->len, mode);
+                ret = HAL_I2C_Master_Seq_Transmit_DMA(handle, (msg->addr<<1), msg->buf, msg->len, mode);
             }
             else
             {
-                ret = HAL_I2C_Master_Seq_Transmit_IT(handle, (msg->addr<<1)  , msg->buf, msg->len, mode);
+                ret = HAL_I2C_Master_Seq_Transmit_IT(handle, (msg->addr<<1), msg->buf, msg->len, mode);
             }
             if (ret != RT_EOK)
             {
@@ -250,7 +250,7 @@ static rt_ssize_t stm32_i2c_master_xfer(struct rt_i2c_bus_device *bus,
     }
     /* last msg */
     msg = &msgs[i];
-        timeout = msg->len/TRANS_TIMEOUT_PERSEC+1;
+        timeout = msg->len/TRANS_TIMEOUT_PERSEC + 5;
     if (msg->flags & RT_I2C_NO_STOP)
         mode = I2C_LAST_FRAME_NO_STOP;
     else
@@ -263,11 +263,11 @@ static rt_ssize_t stm32_i2c_master_xfer(struct rt_i2c_bus_device *bus,
                                                                                                                                                    : "nuknown mode");
         if ((i2c_obj->i2c_dma_flag & I2C_USING_RX_DMA_FLAG) && (msg->len >= DMA_TRANS_MIN_LEN))
         {
-            ret = HAL_I2C_Master_Seq_Receive_DMA(handle, (msg->addr<<1) , msg->buf, msg->len, mode);
+            ret = HAL_I2C_Master_Seq_Receive_DMA(handle, (msg->addr<<1), msg->buf, msg->len, mode);
         }
         else
         {
-            ret = HAL_I2C_Master_Seq_Receive_IT(handle,(msg->addr<<1) , msg->buf, msg->len, mode);
+            ret = HAL_I2C_Master_Seq_Receive_IT(handle,(msg->addr<<1), msg->buf, msg->len, mode);
         }
         if (ret != RT_EOK)
         {
@@ -287,11 +287,11 @@ static rt_ssize_t stm32_i2c_master_xfer(struct rt_i2c_bus_device *bus,
                                                                                                                                                    : "nuknown mode");
         if ((i2c_obj->i2c_dma_flag & I2C_USING_TX_DMA_FLAG) && (msg->len >= DMA_TRANS_MIN_LEN))
         {
-            ret = HAL_I2C_Master_Seq_Transmit_DMA(handle, (msg->addr<<1)  , msg->buf, msg->len, mode);
+            ret = HAL_I2C_Master_Seq_Transmit_DMA(handle, (msg->addr<<1), msg->buf, msg->len, mode);
         }
         else
         {
-            ret = HAL_I2C_Master_Seq_Transmit_IT(handle, (msg->addr<<1)  , msg->buf, msg->len, mode);
+            ret = HAL_I2C_Master_Seq_Transmit_IT(handle, (msg->addr<<1), msg->buf, msg->len, mode);
         }
         if (ret != RT_EOK)
         {
@@ -321,8 +321,9 @@ out:
     if (handle->ErrorCode == HAL_I2C_ERROR_BERR)
     {
         LOG_D("I2C BUS Error now stoped");
-        handle->Instance->CR1 |= I2C_IT_STOPI;
+        handle->Instance->CR1 |= I2C_CR1_STOP;
         ret=i-1;
+    }
     return ret;
 }
 
